@@ -1,5 +1,5 @@
 """
-db.py - 数据库操作（支持 PostgreSQL）
+db.py - 数据库操作（PostgreSQL）
 """
 import os
 import psycopg2
@@ -13,9 +13,9 @@ from config import DATABASE_URL
 # ─────────────────────────────────────────────────────────────────────────────
 @contextmanager
 def get_conn():
-    """获取数据库连接（自动管理关闭）"""
+    """获取数据库连接"""
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL not set - are you running on Railway?")
+        raise RuntimeError("DATABASE_URL not set")
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     try:
         yield conn
@@ -49,10 +49,10 @@ def init_db():
             CREATE TABLE IF NOT EXISTS workouts (
                 id         SERIAL PRIMARY KEY,
                 user_id    BIGINT,
-                date       DATE,
+                workout_date DATE,
                 exercise   TEXT,
                 reps       INTEGER,
-                sets       INTEGER,
+                sets_count INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
@@ -63,15 +63,14 @@ def init_db():
                 id         SERIAL PRIMARY KEY,
                 user_id    BIGINT,
                 weight     REAL,
-                date       DATE,
+                weight_date DATE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
 
-        # 索引
-        c.execute("CREATE INDEX IF NOT EXISTS idx_workouts_user_date ON workouts(user_id, date)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_weights_user_date ON weights(user_id, date)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_workouts_user ON workouts(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_weights_user ON weights(user_id)")
 
         conn.commit()
 
@@ -79,7 +78,6 @@ def init_db():
 # 用户操作
 # ─────────────────────────────────────────────────────────────────────────────
 def get_user(user_id: int):
-    """获取用户信息"""
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
@@ -87,7 +85,6 @@ def get_user(user_id: int):
         return dict(row) if row else None
 
 def create_user(user_id: int, name: str = None, target_weight: float = None):
-    """创建新用户"""
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -99,7 +96,6 @@ def create_user(user_id: int, name: str = None, target_weight: float = None):
     return get_user(user_id)
 
 def update_user(user_id: int, **kwargs):
-    """更新用户字段"""
     if not kwargs:
         return
     sets = ", ".join(f"{k} = %s" for k in kwargs.keys())
@@ -110,7 +106,6 @@ def update_user(user_id: int, **kwargs):
         conn.commit()
 
 def get_all_users():
-    """获取所有用户"""
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT user_id, reminder_time FROM users")
@@ -120,16 +115,15 @@ def get_all_users():
 # ─────────────────────────────────────────────────────────────────────────────
 # 打卡操作
 # ─────────────────────────────────────────────────────────────────────────────
-def log_workout(user_id: int, exercise: str, reps: int, sets: int):
-    """记录打卡"""
+def log_workout(user_id: int, exercise: str, reps: int, sets_count: int):
     today = date.today()
     with get_conn() as conn:
         c = conn.cursor()
 
         c.execute("""
-            INSERT INTO workouts (user_id, date, exercise, reps, sets)
+            INSERT INTO workouts (user_id, workout_date, exercise, reps, sets_count)
             VALUES (%s, %s, %s, %s, %s)
-        """, (user_id, today, exercise, reps, sets))
+        """, (user_id, today, exercise, reps, sets_count))
 
         user = get_user(user_id)
         streak = user["streak"] if user else 0
@@ -146,8 +140,8 @@ def log_workout(user_id: int, exercise: str, reps: int, sets: int):
             streak = 1
 
         c.execute("""
-            SELECT COUNT(DISTINCT date) as cnt FROM workouts
-            WHERE user_id = %s AND date >= CURRENT_DATE - INTERVAL '30 days'
+            SELECT COUNT(DISTINCT workout_date) as cnt FROM workouts
+            WHERE user_id = %s AND workout_date >= CURRENT_DATE - INTERVAL '30 days'
         """, (user_id,))
         recent_days = c.fetchone()["cnt"]
 
@@ -171,31 +165,30 @@ def log_workout(user_id: int, exercise: str, reps: int, sets: int):
             "streak": streak,
             "level": new_level,
             "reps": reps,
-            "sets": sets,
+            "sets": sets_count,
             "exercise": exercise,
         }
 
 def get_workout_stats(user_id: int):
-    """获取用户运动统计"""
     with get_conn() as conn:
         c = conn.cursor()
 
         c.execute("""
-            SELECT COUNT(DISTINCT date) as cnt FROM workouts
-            WHERE user_id = %s AND date >= DATE_TRUNC('week', CURRENT_DATE)
+            SELECT COUNT(DISTINCT workout_date) as cnt FROM workouts
+            WHERE user_id = %s AND workout_date >= DATE_TRUNC('week', CURRENT_DATE)
         """, (user_id,))
         week_days = c.fetchone()["cnt"]
 
         c.execute("""
             SELECT COUNT(*) as cnt FROM workouts
-            WHERE user_id = %s AND date >= DATE_TRUNC('week', CURRENT_DATE)
+            WHERE user_id = %s AND workout_date >= DATE_TRUNC('week', CURRENT_DATE)
         """, (user_id,))
         week_workouts = c.fetchone()["cnt"]
 
         c.execute("""
-            SELECT date, exercise, reps, sets FROM workouts
-            WHERE user_id = %s AND date >= CURRENT_DATE - INTERVAL '7 days'
-            ORDER BY date DESC
+            SELECT workout_date, exercise, reps, sets_count FROM workouts
+            WHERE user_id = %s AND workout_date >= CURRENT_DATE - INTERVAL '7 days'
+            ORDER BY workout_date DESC
         """, (user_id,))
         recent = [dict(r) for r in c.fetchall()]
 
@@ -217,13 +210,12 @@ def get_workout_stats(user_id: int):
 # 体重操作
 # ─────────────────────────────────────────────────────────────────────────────
 def log_weight(user_id: int, weight: float):
-    """记录体重"""
     today = date.today()
     with get_conn() as conn:
         c = conn.cursor()
 
         c.execute("""
-            INSERT INTO weights (user_id, weight, date)
+            INSERT INTO weights (user_id, weight, weight_date)
             VALUES (%s, %s, %s)
         """, (user_id, weight, today))
 
@@ -232,9 +224,9 @@ def log_weight(user_id: int, weight: float):
         """, (weight, user_id))
 
         c.execute("""
-            SELECT weight, date FROM weights
+            SELECT weight, weight_date FROM weights
             WHERE user_id = %s AND weight IS NOT NULL
-            ORDER BY date DESC
+            ORDER BY weight_date DESC
             LIMIT 30
         """, (user_id,))
         history = [dict(r) for r in c.fetchall()]
@@ -252,14 +244,13 @@ def log_weight(user_id: int, weight: float):
     }
 
 def get_weight_history(user_id: int, days: int = 30):
-    """获取体重历史"""
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
-            SELECT weight, date FROM weights
-            WHERE user_id = %s AND date >= CURRENT_DATE - INTERVAL '%s days'
-            ORDER BY date ASC
-        """, (user_id, days))
+            SELECT weight, weight_date FROM weights
+            WHERE user_id = %s AND weight_date >= CURRENT_DATE - INTERVAL %s
+            ORDER BY weight_date ASC
+        """, (user_id, f"{days} days"))
         rows = c.fetchall()
         conn.commit()
         return [dict(r) for r in rows]

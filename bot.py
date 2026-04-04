@@ -131,10 +131,10 @@ def format_stats_message(stats: dict) -> str:
         msg += "\n\n📅 最近记录："
         dates_seen = set()
         for r in stats["recent"]:
-            d = r["date"][:10] if isinstance(r["date"], str) else str(r["date"])
+            d = str(r["workout_date"])[:10]
             if d not in dates_seen:
                 dates_seen.add(d)
-                msg += f"\n  {d} — {r['exercise']} {r['reps']}×{r['sets']}"
+                msg += f"\n  {d} — {r['exercise']} {r['reps']}×{r['sets_count']}"
     return msg
 
 async def edit_or_reply(update, text, reply_markup=None):
@@ -420,7 +420,7 @@ async def weight_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         msg = "📊 体重记录：\n"
         for h in history[-7:]:
-            d = h["date"][:10] if isinstance(h["date"], str) else str(h["date"])
+            d = str(h["weight_date"])[:10]
             msg += f"{d} — {h['weight']}kg\n"
         await update.message.reply_text(msg, reply_markup=get_back_menu_keyboard())
         return
