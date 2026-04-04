@@ -84,17 +84,18 @@ def get_daily_exercise(level: int = 1) -> dict:
     }
 
 def format_workout_message(exercise: dict, streak: int = 0) -> str:
+    unit = exercise.get('unit', '个')
     msg = f"""🏋️ 今日任务
 ━━━━━━━━━━━━━━━━━━
 动作：{exercise['emoji']} {exercise['name']}
-目标：{exercise['reps']}个 × {exercise['sets']}组
+目标：{exercise['reps']}{unit} × {exercise['sets']}组
 ⏱ 预计时间：3-5分钟
 难度：{exercise['level_name']}
 
 {exercise['desc']}
 
 ━━━━━━━━━━━━━━━━━━
-👇 完成后点击「打卡」按钮"""
+👇 完成后点击下方「打卡」按钮 👇"""
     if streak > 0:
         msg += f"\n\n🔥 连续打卡：{streak}天"
     return msg
