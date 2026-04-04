@@ -129,12 +129,9 @@ def format_stats_message(stats: dict) -> str:
             msg += f"\n📈 距目标：{diff:+.1f}kg"
     if stats.get("recent"):
         msg += "\n\n📅 最近记录："
-        dates_seen = set()
         for r in stats["recent"]:
             d = str(r["workout_date"])[:10]
-            if d not in dates_seen:
-                dates_seen.add(d)
-                msg += f"\n  {d} — {r['exercise']} {r['reps']}×{r['sets_count']}"
+            msg += f"\n  {d} — {r['exercise']} {r['reps']}×{r['sets_count']}"
     return msg
 
 async def edit_or_reply(update, text, reply_markup=None):
