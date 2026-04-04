@@ -160,9 +160,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cmd_menu":
         await show_menu_inline(query, user_id)
     elif data == "cmd_today":
-        await show_today_inline(query, context, user_id)
+        await show_today_inline(query, user_id)
     elif data == "cmd_checkin":
-        await do_checkin_inline(query, context, user_id)
+        await do_checkin_inline(query, user_id)
     elif data == "cmd_stats":
         await show_stats_inline(query, user_id)
     elif data == "cmd_weight":
@@ -205,7 +205,7 @@ async def show_menu_inline(query, user_id: int):
         parse_mode="HTML",
     )
 
-async def show_today_inline(query, context, user_id: int):
+async def show_today_inline(query, user_id: int):
     """显示今日任务"""
     user = db.get_user(user_id)
     if not user:
@@ -224,13 +224,13 @@ async def show_today_inline(query, context, user_id: int):
         parse_mode="HTML",
     )
 
-async def do_checkin_inline(query, context, user_id: int):
+async def do_checkin_inline(query, user_id: int):
     """执行打卡"""
     user = db.get_user(user_id)
     if not user:
         await query.edit_message_text("请先 /start 开始使用！")
         return
-    exercise = context.user_data.get("today_exercise") or get_daily_exercise(user["level"])
+    exercise = get_daily_exercise(user["level"])
     result = db.log_workout(user_id, exercise["name"], exercise["reps"], exercise["sets"])
     stats = db.get_workout_stats(user_id)
     streak = result["streak"]
