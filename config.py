@@ -11,8 +11,8 @@ load_dotenv(BASE_DIR / ".env")
 # Telegram Bot Token
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
-# 数据库
-DATABASE_PATH = BASE_DIR / "data" / "fitness.db"
+# PostgreSQL 数据库（Railway 自动提供 DATABASE_URL）
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # 每日推送时间（HH:MM，24小时制）
 DEFAULT_REMINDER_TIME = "08:00"
