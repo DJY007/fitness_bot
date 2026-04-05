@@ -765,6 +765,95 @@ async def send_daily_reminder(app: Application):
         except Exception as e:
             logger.error(f"发送每日提醒失败（用户 {user.get('user_id')}）：{e}")
 
+def get_weekly_report(user_id: int):
+    """生成周报内容"""
+    user = db.get_user(user_id)
+    if not user:
+        return None
+
+    import datetime
+    today = datetime.date.today()
+    week_ago = today - datetime.timedelta(days=7)
+
+    stats = db.get_workout_stats(user_id)
+    name = user.get("name", "")
+
+    # 获取本周打卡记录
+    with db.get_conn() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT workout_date, exercise, reps, sets_count
+            FROM workouts
+            WHERE user_id = %s AND workout_date >= %s
+            ORDER BY workout_date DESC
+        """, (user_id, week_ago))
+        rows = [dict(r) for r in c.fetchall()]
+
+    total_workouts = len(rows)
+    total_reps = sum(r["reps"] * r["sets_count"] for r in rows)
+
+    # 今日体重
+    weight = user.get("current_weight")
+    target = user.get("target_weight")
+
+    msg = f"""📊 本周运动报告
+━━━━━━━━━━━━━━━━━━
+👤 {name}，这是你的一周总结：
+
+🏋️ 本周运动：{total_workouts} 次
+💪 完成动作：{total_reps} 个（总计）
+🔥 连续打卡：{stats['streak']} 天
+🏆 累计完成：{stats['total_workouts']} 次"""
+
+    if weight:
+        msg += f"\n⚖️ 当前体重：{weight}kg"
+    if target:
+        diff = weight - target if weight else 0
+        msg += f"\n🎯 距目标：{diff:+.1f}kg"
+
+    if rows:
+        msg += "\n\n📅 本周记录："
+        dates_seen = set()
+        for r in rows:
+            d = str(r["workout_date"])[:10]
+            if d not in dates_seen:
+                dates_seen.add(d)
+                msg += f"\n  {d} — {r['exercise']} {r['reps']}×{r['sets_count']}"
+
+    # 鼓励语
+    if total_workouts >= 5:
+        msg += "\n\n💪 太棒了！一周5次运动，继续保持！"
+    elif total_workouts >= 3:
+        msg += "\n\n👍 不错的开始，下周争取更多！"
+    elif total_workouts >= 1:
+        msg += "\n\n📈 动起来就是进步，下周加油！"
+    else:
+        msg += "\n\n💤 这周有点懒哦，下周动起来！"
+
+    msg += "\n\n━━━━━━━━━━━━━━━━━━"
+    return msg
+
+async def send_weekly_report(app: Application):
+    """每周日晚上发送周报"""
+    users = db.get_all_users()
+    for user in users:
+        try:
+            report = get_weekly_report(user["user_id"])
+            if report:
+                keyboard = [
+                    [InlineKeyboardButton("🏋️ 今日任务", callback_data="cmd_today")],
+                    [InlineKeyboardButton("📊 我的统计", callback_data="cmd_stats")],
+                ]
+                await app.bot.send_message(
+                    chat_id=user["user_id"],
+                    text=report,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="HTML",
+                )
+                logger.info(f"周报已发送给用户 {user['user_id']}")
+        except Exception as e:
+            logger.error(f"发送周报失败（用户 {user.get('user_id')}）：{e}")
+
 def start_scheduler(app: Application):
     """启动定时任务调度器"""
     scheduler = BackgroundScheduler()
@@ -777,10 +866,21 @@ def start_scheduler(app: Application):
             args=[app],
             id="daily_reminder",
             replace_existing=True,
-            misfire_grace_time=3600,  # 允许1小时内错过
+            misfire_grace_time=3600,
         )
+
+        # 每周日晚上 20:00 发周报
+        scheduler.add_job(
+            send_weekly_report,
+            CronTrigger(day_of_week="sun", hour=20, minute=0, timezone=ZoneInfo("Asia/Singapore")),
+            args=[app],
+            id="weekly_report",
+            replace_existing=True,
+            misfire_grace_time=7200,
+        )
+
         scheduler.start()
-        logger.info("每日提醒调度器已启动（每天 08:00 Asia/Singapore）")
+        logger.info("调度器已启动（每日 08:00 + 每周日 20:00）")
     except Exception as e:
         logger.error(f"调度器启动失败：{e}")
 
@@ -852,7 +952,7 @@ def main():
     sched = start_scheduler(app)
 
     print("🏋️ Fitness5 Bot 已启动！")
-    print("⏰ 每日提醒调度器运行中（每天 08:00）")
+    print("⏰ 调度器：每日 08:00 提醒 + 每周日 20:00 周报")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
