@@ -701,8 +701,18 @@ async def catchup_callback_handler(update: Update, context: ContextTypes.DEFAULT
     return WAIT_CATCHUP_DATE
 
 async def unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().lower()
-    if text in ["打卡", "done", "完成了"]:
+    text = update.message.text.strip()
+
+    # 懒人打卡：任何数字都当打卡
+    try:
+        num = float(text)
+        await checkin_command(update, context)
+        return
+    except ValueError:
+        pass
+
+    text_lower = text.lower()
+    if text_lower in ["打卡", "done", "完成了", "打", "ok", "好", "✅"]:
         await checkin_command(update, context)
     else:
         await update.message.reply_text(
