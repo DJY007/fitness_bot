@@ -13,6 +13,9 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters,
     CallbackQueryHandler,
 )
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from zoneinfo import ZoneInfo
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
@@ -708,6 +711,72 @@ async def unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 每日定时提醒
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def send_daily_reminder(app: Application):
+    """发送每日运动提醒给所有用户"""
+    users = db.get_all_users()
+    for user in users:
+        try:
+            user_id = user["user_id"]
+            reminder_time = user.get("reminder_time", DEFAULT_REMINDER_TIME)
+            # 获取用户的今日任务
+            level = user.get("level", 1)
+            exercise = get_daily_exercise(level)
+            streak = user.get("streak", 0)
+            name = user.get("name", "")
+
+            msg = f"""☀️ 早安 {name}！
+
+🏋️ 今日任务
+━━━━━━━━━━━━━━━━━━
+动作：{exercise['emoji']} {exercise['name']}
+目标：{exercise['reps']}{exercise.get('unit','个')} × {exercise['sets']}组
+⏱ 预计时间：3-5分钟
+
+{exercise['desc']}
+
+━━━━━━━━━━━━━━━━━━
+👇 完成后回复「打卡」或点击按钮！"""
+
+            keyboard = [
+                [InlineKeyboardButton("✅ 打卡", callback_data="cmd_checkin")],
+                [InlineKeyboardButton("📊 查看统计", callback_data="cmd_stats")],
+            ]
+
+            await app.bot.send_message(
+                chat_id=user_id,
+                text=msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="HTML",
+            )
+            logger.info(f"每日提醒已发送给用户 {user_id}")
+        except Exception as e:
+            logger.error(f"发送每日提醒失败（用户 {user.get('user_id')}）：{e}")
+
+def start_scheduler(app: Application):
+    """启动定时任务调度器"""
+    scheduler = BackgroundScheduler()
+
+    # 每天早上 8:00 发提醒
+    try:
+        scheduler.add_job(
+            send_daily_reminder,
+            CronTrigger(hour=8, minute=0, timezone=ZoneInfo("Asia/Singapore")),
+            args=[app],
+            id="daily_reminder",
+            replace_existing=True,
+            misfire_grace_time=3600,  # 允许1小时内错过
+        )
+        scheduler.start()
+        logger.info("每日提醒调度器已启动（每天 08:00 Asia/Singapore）")
+    except Exception as e:
+        logger.error(f"调度器启动失败：{e}")
+
+    return scheduler
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 主程序
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
@@ -769,7 +838,11 @@ def main():
     app.add_handler(CommandHandler("settime", settime_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message))
 
+    # 启动每日提醒调度器
+    sched = start_scheduler(app)
+
     print("🏋️ Fitness5 Bot 已启动！")
+    print("⏰ 每日提醒调度器运行中（每天 08:00）")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
