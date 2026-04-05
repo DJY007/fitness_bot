@@ -115,49 +115,57 @@ def get_all_users():
 # ─────────────────────────────────────────────────────────────────────────────
 # 打卡操作
 # ─────────────────────────────────────────────────────────────────────────────
-def log_workout(user_id: int, exercise: str, reps: int, sets_count: int):
-    today = date.today()
+def log_workout(user_id: int, exercise: str, reps: int, sets_count: int, workout_date: date = None):
+    """记录打卡，可指定日期（补卡用）"""
+    target_date = workout_date or date.today()
     with get_conn() as conn:
         c = conn.cursor()
 
         c.execute("""
             INSERT INTO workouts (user_id, workout_date, exercise, reps, sets_count)
             VALUES (%s, %s, %s, %s, %s)
-        """, (user_id, today, exercise, reps, sets_count))
+        """, (user_id, target_date, exercise, reps, sets_count))
 
         user = get_user(user_id)
         streak = user["streak"] if user else 0
         last_date = user["last_workout_date"] if user else None
 
-        if last_date:
-            last = last_date if isinstance(last_date, date) else datetime.strptime(str(last_date), "%Y-%m-%d").date()
-            diff = (today - last).days
-            if diff == 1:
-                streak += 1
-            elif diff > 1:
+        # 补卡不更新连续天数 streak，只更新总数
+        if workout_date is None:
+            # 正常打卡才更新 streak
+            if last_date:
+                last = last_date if isinstance(last_date, date) else datetime.strptime(str(last_date), "%Y-%m-%d").date()
+                diff = (target_date - last).days
+                if diff == 1:
+                    streak += 1
+                elif diff > 1:
+                    streak = 1
+            else:
                 streak = 1
+
+            c.execute("""
+                SELECT COUNT(DISTINCT workout_date) as cnt FROM workouts
+                WHERE user_id = %s AND workout_date >= CURRENT_DATE - INTERVAL '30 days'
+            """, (user_id,))
+            recent_days = c.fetchone()["cnt"]
+
+            level = user["level"] if user else 1
+            new_level = level
+            if recent_days >= 7 * level and level < 10:
+                new_level = min(level + 1, 10)
+
+            c.execute("""
+                UPDATE users SET
+                    streak = %s,
+                    total_workouts = total_workouts + 1,
+                    last_workout_date = %s,
+                    level = %s
+                WHERE user_id = %s
+            """, (streak, target_date, new_level, user_id))
         else:
-            streak = 1
-
-        c.execute("""
-            SELECT COUNT(DISTINCT workout_date) as cnt FROM workouts
-            WHERE user_id = %s AND workout_date >= CURRENT_DATE - INTERVAL '30 days'
-        """, (user_id,))
-        recent_days = c.fetchone()["cnt"]
-
-        level = user["level"] if user else 1
-        new_level = level
-        if recent_days >= 7 * level and level < 10:
-            new_level = min(level + 1, 10)
-
-        c.execute("""
-            UPDATE users SET
-                streak = %s,
-                total_workouts = total_workouts + 1,
-                last_workout_date = %s,
-                level = %s
-            WHERE user_id = %s
-        """, (streak, today, new_level, user_id))
+            # 补卡只加总数，不改 streak
+            c.execute("UPDATE users SET total_workouts = total_workouts + 1 WHERE user_id = %s", (user_id,))
+            new_level = user["level"] if user else 1
 
         conn.commit()
 
@@ -167,6 +175,7 @@ def log_workout(user_id: int, exercise: str, reps: int, sets_count: int):
             "reps": reps,
             "sets": sets_count,
             "exercise": exercise,
+            "date": target_date,
         }
 
 def get_workout_stats(user_id: int):

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # 状态
 # ─────────────────────────────────────────────────────────────────────────────
-WAIT_NAME, WAIT_TARGET = range(2)
+WAIT_NAME, WAIT_TARGET, WAIT_CATCHUP_DATE, WAIT_CATCHUP_EXERCISE, WAIT_CATCHUP_REPS, WAIT_CATCHUP_SETS, WAIT_CATCHUP_CONFIRM = range(8)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 键盘菜单
@@ -51,7 +51,10 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚖️ 记录体重", callback_data="cmd_weight"),
         ],
         [
+            InlineKeyboardButton("🔄 补卡", callback_data="cmd_catchup"),
             InlineKeyboardButton("⚙️ 设置时间", callback_data="cmd_settime"),
+        ],
+        [
             InlineKeyboardButton("📖 帮助", callback_data="cmd_help"),
         ],
     ]
@@ -260,6 +263,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current = user.get("reminder_time", DEFAULT_REMINDER_TIME) if user else DEFAULT_REMINDER_TIME
             await query.edit_message_text(
                 text=f"⚙️ 当前推送时间：{current}\n\n发送 /settime 08:00 设置新时间\n\n例如：/settime 07:30",
+                reply_markup=get_back_menu_keyboard(),
+            )
+
+        elif data == "cmd_catchup":
+            await update.callback_query.message.reply_text(
+                "🔄 发送 /catchup 进入补卡流程",
                 reply_markup=get_back_menu_keyboard(),
             )
 
@@ -481,16 +490,212 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         """📖 Fitness5 命令说明
 
-🏋️ /today    — 今日任务
-✅ /checkin  — 打卡
-📊 /stats    — 运动统计
-⚖️ /weight   — 记录体重
-⚙️ /settime  — 设置推送时间
-📖 /help     — 显示帮助
+🏋️ /today     — 今日任务
+✅ /checkin   — 打卡
+📊 /stats     — 运动统计
+⚖️ /weight    — 记录体重
+🔄 /catchup   — 补录昨天或之前的打卡
+⚙️ /settime   — 设置推送时间
+📖 /help      — 显示帮助
 
 💪 每天5分钟，坚持就是胜利！""",
         reply_markup=get_back_menu_keyboard(),
     )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 补卡流程
+# ─────────────────────────────────────────────────────────────────────────────
+
+CATCHUP_EXERCISES = [
+    {"name": "俯卧撑", "emoji": "💪", "unit": "个"},
+    {"name": "深蹲", "emoji": "🦵", "unit": "个"},
+    {"name": "开合跳", "emoji": "⭐", "unit": "个"},
+    {"name": "平板支撑", "emoji": "🧘", "unit": "秒"},
+    {"name": "登山者", "emoji": "🏔️", "unit": "秒"},
+    {"name": "仰卧起坐", "emoji": "🙆", "unit": "个"},
+    {"name": "箭步蹲", "emoji": "🚶", "unit": "个"},
+    {"name": "高抬腿", "emoji": "🏃", "unit": "秒"},
+    {"name": "波比跳", "emoji": "💥", "unit": "个"},
+]
+
+def get_catchup_exercise_keyboard():
+    keyboard = []
+    row = []
+    for i, ex in enumerate(CATCHUP_EXERCISES):
+        row.append(InlineKeyboardButton(f"{ex['emoji']}{ex['name']}", callback_data=f"catchup_ex_{i}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("🔙 取消", callback_data="catchup_cancel")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def catchup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """开始补卡流程"""
+    user_id = update.effective_user.id
+    user = db.get_user(user_id)
+    if not user:
+        await update.message.reply_text("请先 /start 绑定账号")
+        return
+
+    from datetime import timedelta
+    yesterday = date.today() - timedelta(days=1)
+    context.user_data["catchup_date"] = yesterday
+
+    await update.message.reply_text(
+        f"""🔄 补卡功能
+━━━━━━━━━━━━━━━━━━
+请选择你要补录的运动日期：
+（默认：{yesterday.strftime('%Y-%m-%d')}）
+
+直接回复日期，格式：YYYY-MM-DD
+例如：{yesterday.strftime('%Y-%m-%d')}""",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📅 昨天", callback_data="catchup_yesterday"),
+            InlineKeyboardButton("📅 前天", callback_data="catchup_2days"),
+            InlineKeyboardButton("🔙 取消", callback_data="catchup_cancel"),
+        ]]),
+    )
+    return WAIT_CATCHUP_DATE
+
+async def catchup_date_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理补卡日期输入"""
+    text = update.message.text.strip()
+    try:
+        catchup_date = datetime.strptime(text, "%Y-%m-%d").date()
+        if catchup_date > date.today():
+            await update.message.reply_text("日期不能是未来哦！请重新输入：")
+            return WAIT_CATCHUP_DATE
+        context.user_data["catchup_date"] = catchup_date
+    except ValueError:
+        await update.message.reply_text("日期格式不对，请用 YYYY-MM-DD，例如：2026-04-03")
+        return WAIT_CATCHUP_DATE
+
+    await update.message.reply_text(
+        f"""📅 补卡日期：{catchup_date.strftime('%Y-%m-%d')}
+
+现在选择运动项目：""",
+        reply_markup=get_catchup_exercise_keyboard(),
+    )
+    return WAIT_CATCHUP_EXERCISE
+
+async def catchup_exercise_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理补卡运动选择"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "catchup_cancel":
+        await query.edit_message_text("已取消补卡，返回菜单 👇", reply_markup=get_main_menu_keyboard())
+        return ConversationHandler.END
+
+    if data in ["catchup_yesterday", "catchup_2days"]:
+        from datetime import timedelta
+        days = 1 if data == "catchup_yesterday" else 2
+        context.user_data["catchup_date"] = date.today() - timedelta(days=days)
+
+    if data.startswith("catchup_ex_"):
+        idx = int(data.split("_")[-1])
+        exercise = CATCHUP_EXERCISES[idx]
+        context.user_data["catchup_exercise"] = exercise
+        context.user_data["catchup_unit"] = exercise["unit"]
+        d = context.user_data["catchup_date"]
+        await query.edit_message_text(
+            (f"{exercise['emoji']} {exercise['name']}（{d.strftime('%Y-%m-%d')}）\n\n"
+             f"请输入完成的数量（{exercise['unit']}）："),
+            reply_markup=None,
+        )
+        return WAIT_CATCHUP_REPS
+
+    if data.startswith("catchup_date_"):
+        d = datetime.strptime(data.replace("catchup_date_",""), "%Y-%m-%d").date()
+        context.user_data["catchup_date"] = d
+        await query.edit_message_text(f"日期已设为：{d.strftime('%Y-%m-%d')}\n\n现在选择运动：", reply_markup=get_catchup_exercise_keyboard())
+        return WAIT_CATCHUP_EXERCISE
+
+async def catchup_reps_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理补卡数量输入"""
+    text = update.message.text.strip()
+    try:
+        reps = int(text)
+        if reps <= 0:
+            raise ValueError()
+    except ValueError:
+        unit = context.user_data.get("catchup_unit", "个")
+        await update.message.reply_text(f"请输入有效数字（{unit}）：")
+        return WAIT_CATCHUP_REPS
+
+    context.user_data["catchup_reps"] = reps
+    exercise = context.user_data.get("catchup_exercise", {})
+    unit = context.user_data.get("catchup_unit", "个")
+
+    await update.message.reply_text(
+        (f"{exercise.get('emoji','🏋️')} {exercise.get('name','运动')} × {reps}{unit}\n\n"
+         f"默认 3 组，直接发送数字修改组数，或发送「确认」完成补卡："),
+    )
+    return WAIT_CATCHUP_SETS
+
+async def catchup_sets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理补卡组数确认"""
+    text = update.message.text.strip()
+
+    if text in ["确认", "ok", "好", "确定"]:
+        sets = 3
+    else:
+        try:
+            sets = int(text)
+            if sets <= 0:
+                raise ValueError()
+        except ValueError:
+            await update.message.reply_text("发送「确认」完成补卡，或发送数字修改组数：")
+            return WAIT_CATCHUP_SETS
+
+    user_id = update.effective_user.id
+    exercise = context.user_data.get("catchup_exercise", {})
+    reps = context.user_data.get("catchup_reps", 10)
+    catchup_date = context.user_data.get("catchup_date", date.today())
+
+    result = db.log_workout(user_id, exercise["name"], reps, sets, workout_date=catchup_date)
+
+    await update.message.reply_text(
+        (f"✅ 补卡成功！\n━━━━━━━━━━━━━━━━━━\n"
+         f"📅 日期：{catchup_date.strftime('%Y-%m-%d')}\n"
+         f"🏋️ {exercise.get('emoji','')} {exercise.get('name','')} × "
+         f"{reps}{exercise.get('unit','个')} × {sets}组\n\n"
+         f"💪 继续保持！"),
+        reply_markup=get_main_menu_keyboard(),
+    )
+    # 清理
+    for key in ["catchup_date","catchup_exercise","catchup_reps","catchup_unit"]:
+        context.user_data.pop(key, None)
+    return ConversationHandler.END
+
+async def catchup_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理补卡流程中的按钮"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "catchup_cancel":
+        await query.edit_message_text("已取消补卡 👋", reply_markup=get_main_menu_keyboard())
+        return ConversationHandler.END
+
+    if data == "catchup_yesterday":
+        from datetime import timedelta
+        context.user_data["catchup_date"] = date.today() - timedelta(days=1)
+        d = context.user_data["catchup_date"]
+        await query.edit_message_text(f"日期：{d.strftime('%Y-%m-%d')}\n\n现在选择运动：", reply_markup=get_catchup_exercise_keyboard())
+        return WAIT_CATCHUP_EXERCISE
+
+    if data == "catchup_2days":
+        from datetime import timedelta
+        context.user_data["catchup_date"] = date.today() - timedelta(days=2)
+        d = context.user_data["catchup_date"]
+        await query.edit_message_text(f"日期：{d.strftime('%Y-%m-%d')}\n\n现在选择运动：", reply_markup=get_catchup_exercise_keyboard())
+        return WAIT_CATCHUP_EXERCISE
+
+    return WAIT_CATCHUP_DATE
 
 async def unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().lower()
@@ -517,7 +722,33 @@ def main():
         .build()
     )
 
-    app.add_handler(CallbackQueryHandler(button_callback))
+    # 补卡按钮回调（独立处理，不走普通按钮逻辑）
+    app.add_handler(CallbackQueryHandler(catchup_callback_handler, pattern=r"^(catchup_|cmd_)"))
+
+    # 补卡对话
+    catchup_conv = ConversationHandler(
+        entry_points=[CommandHandler("catchup", catchup_command)],
+        states={
+            WAIT_CATCHUP_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catchup_date_handler),
+                CallbackQueryHandler(catchup_callback_handler, pattern=r"^catchup_"),
+            ],
+            WAIT_CATCHUP_EXERCISE: [
+                CallbackQueryHandler(catchup_exercise_callback, pattern=r"^catchup_"),
+            ],
+            WAIT_CATCHUP_REPS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catchup_reps_handler),
+            ],
+            WAIT_CATCHUP_SETS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catchup_sets_handler),
+            ],
+        },
+        fallbacks=[],
+        allow_reentry=True,
+    )
+    app.add_handler(catchup_conv)
+
+    app.add_handler(CallbackQueryHandler(button_callback, pattern=r"^cmd_"))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start_command)],
