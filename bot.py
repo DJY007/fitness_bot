@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # 状态
 # ─────────────────────────────────────────────────────────────────────────────
-WAIT_NAME, WAIT_TARGET, WAIT_CATCHUP_DATE, WAIT_CATCHUP_EXERCISE, WAIT_CATCHUP_REPS, WAIT_CATCHUP_SETS, WAIT_CATCHUP_CONFIRM = range(8)
+WAIT_NAME, WAIT_TARGET, WAIT_CATCHUP_DATE, WAIT_CATCHUP_EXERCISE, WAIT_CATCHUP_REPS, WAIT_CATCHUP_SETS = range(7)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 键盘菜单
