@@ -902,7 +902,7 @@ def main():
     )
 
     # 补卡按钮回调（独立处理，不走普通按钮逻辑）
-    app.add_handler(CallbackQueryHandler(catchup_callback_handler, pattern=r"^(catchup_|cmd_)"))
+    app.add_handler(CallbackQueryHandler(catchup_callback_handler, pattern=r"^catchup_"))
 
     # 补卡对话
     catchup_conv = ConversationHandler(
